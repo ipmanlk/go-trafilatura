@@ -446,11 +446,14 @@ func postCleaning(doc *html.Node, opts Options) {
 			elementAllowedToHaveSize = true
 		}
 
+		// Compute once per element to avoid repeated string operations in the attr loop.
+		isTikTokEmbed := opts.IncludeVideoEmbeds && tagName == "blockquote" && isVideoEmbedBlockquote(element)
+
 		for _, attr := range element.Attr {
 			// TikTok blockquote embeds use class, cite, and data-video-id as their
 			// functional payload — preserve those attributes even though class is
 			// normally stripped.
-			if opts.IncludeVideoEmbeds && tagName == "blockquote" && isVideoEmbedBlockquote(element) {
+			if isTikTokEmbed {
 				if attr.Key == "class" || attr.Key == "cite" || attr.Key == "data-video-id" {
 					finalAttrs = append(finalAttrs, attr)
 					continue

@@ -106,6 +106,8 @@ func sanitizeBlockquoteEmbed(node *html.Node) *html.Node {
 // Only src, width, height, and controls attributes are kept. Child <source> elements
 // are preserved only when their src passes the Facebook CDN allowlist check.
 // Event-handler attributes (e.g. onplay, onload) and autoplay are never included.
+// Note: callers should use isVideoEmbedVideo first to confirm a Facebook source exists
+// before calling this function; the nil-return at the end is a defensive fallback.
 func sanitizeVideoEmbed(node *html.Node) *html.Node {
 	result := etree.Element("video")
 
