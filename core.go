@@ -206,8 +206,8 @@ func ExtractDocument(doc *html.Node, opts Options) (*ExtractResult, error) {
 	}
 
 	// Post cleaning
-	postCleaning(postBody)
-	postCleaning(commentsBody)
+	postCleaning(postBody, opts)
+	postCleaning(commentsBody, opts)
 
 	return &ExtractResult{
 		ContentNode:  postBody,

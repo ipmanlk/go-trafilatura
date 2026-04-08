@@ -532,9 +532,21 @@ func handleImage(element *html.Node) *html.Node {
 func handleTextElem(element *html.Node, potentialTags map[string]struct{}, cache *lru.Cache, opts Options) *html.Node {
 	tagName := dom.TagName(element)
 
+	if opts.IncludeVideoEmbeds {
+		if tagName == "iframe" && isVideoEmbedIframe(element) {
+			return handleVideoEmbed(element)
+		}
+		if tagName == "video" && isVideoEmbedVideo(element) {
+			return handleVideoEmbed(element)
+		}
+	}
+
 	if inMap(tagName, mapXmlListTags) {
 		return handleLists(element, cache, opts)
 	} else if inMap(tagName, mapXmlQuoteTags) || tagName == "code" {
+		if opts.IncludeVideoEmbeds && tagName == "blockquote" && isVideoEmbedBlockquote(element) {
+			return handleVideoEmbed(element)
+		}
 		return handleQuotes(element, cache, opts)
 	} else if inMap(tagName, mapXmlHeadTags) {
 		return handleTitles(element, cache, opts)
@@ -683,6 +695,11 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 
 	if opts.IncludeLinks {
 		potentialTags["a"] = struct{}{}
+	}
+
+	if opts.IncludeVideoEmbeds {
+		potentialTags["iframe"] = struct{}{}
+		potentialTags["video"] = struct{}{}
 	}
 
 	// Iterate each selector rule

@@ -68,6 +68,12 @@ func docCleaning(doc *html.Node, opts Options) {
 		delete(strippingList, "img")
 	}
 
+	if opts.IncludeVideoEmbeds {
+		delete(cleaningList, "iframe")
+		delete(cleaningList, "video")
+		delete(cleaningList, "source") // for <video><source> children
+	}
+
 	// Remove nodes in stripping list but keep its children
 	for tagName := range strippingList {
 		etree.StripTags(doc, tagName)
@@ -398,7 +404,7 @@ func processNode(element *html.Node, cache *lru.Cache, opts Options) *html.Node 
 // ADDITIONAL:
 // postCleaning is used to clean the extracted content.
 // This is additional function that doesn't exist in original.
-func postCleaning(doc *html.Node) {
+func postCleaning(doc *html.Node, opts Options) {
 	if doc == nil {
 		return
 	}
@@ -408,6 +414,18 @@ func postCleaning(doc *html.Node) {
 	children := dom.GetElementsByTagName(doc, "*")
 	for i := len(children) - 1; i >= 0; i-- {
 		child := children[i]
+		tagName := dom.TagName(child)
+
+		// Video embed elements carry their content via attributes, not child nodes or
+		// text, so skip the empty-node check for them.
+		if opts.IncludeVideoEmbeds {
+			if tagName == "iframe" || tagName == "video" {
+				continue
+			}
+			if tagName == "blockquote" && isVideoEmbedBlockquote(child) {
+				continue
+			}
+		}
 
 		grandChildren := dom.Children(child)
 		isVoidElement := dom.IsVoidElement(child)
@@ -423,7 +441,25 @@ func postCleaning(doc *html.Node) {
 		finalAttrs := []html.Attribute{}
 		_, elementAllowedToHaveSize := elementWithSizeAttr[tagName]
 
+		// iframe and video embeds carry meaningful width/height attributes.
+		if opts.IncludeVideoEmbeds && (tagName == "iframe" || tagName == "video") {
+			elementAllowedToHaveSize = true
+		}
+
+		// Compute once per element to avoid repeated string operations in the attr loop.
+		isTikTokEmbed := opts.IncludeVideoEmbeds && tagName == "blockquote" && isVideoEmbedBlockquote(element)
+
 		for _, attr := range element.Attr {
+			// TikTok blockquote embeds use class, cite, and data-video-id as their
+			// functional payload — preserve those attributes even though class is
+			// normally stripped.
+			if isTikTokEmbed {
+				if attr.Key == "class" || attr.Key == "cite" || attr.Key == "data-video-id" {
+					finalAttrs = append(finalAttrs, attr)
+					continue
+				}
+			}
+
 			// Exclude identification and presentational attributes.
 			switch attr.Key {
 			case "id", "class", "align", "background", "bgcolor", "border", "cellpadding",
