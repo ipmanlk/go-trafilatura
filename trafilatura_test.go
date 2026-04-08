@@ -1504,6 +1504,118 @@ func Test_MixedContentExtraction(t *testing.T) {
 	assert.Equal(t, "Text here", result.ContentText)
 }
 
+func Test_VideoEmbeds(t *testing.T) {
+	videoOpts := Options{
+		IncludeVideoEmbeds: true,
+		Config:             zeroConfig,
+	}
+
+	// --- Detection helpers ---
+
+	// YouTube iframe
+	assert.True(t, isVideoEmbedIframe(etree.FromString(`<iframe src="https://www.youtube.com/embed/abc123"></iframe>`)))
+	// Vimeo iframe
+	assert.True(t, isVideoEmbedIframe(etree.FromString(`<iframe src="https://player.vimeo.com/video/123456"></iframe>`)))
+	// Non-video iframe must not be detected
+	assert.False(t, isVideoEmbedIframe(etree.FromString(`<iframe src="https://example.com/page"></iframe>`)))
+
+	// TikTok blockquote
+	assert.True(t, isVideoEmbedBlockquote(etree.FromString(`<blockquote class="tiktok-embed" cite="https://www.tiktok.com/@user/video/123" data-video-id="123"></blockquote>`)))
+	// Regular blockquote must not be detected
+	assert.False(t, isVideoEmbedBlockquote(etree.FromString(`<blockquote>Some quote</blockquote>`)))
+
+	// Facebook video via src attribute
+	assert.True(t, isVideoEmbedVideo(etree.FromString(`<video src="https://video.xx.fbcdn.net/v/example.mp4"></video>`)))
+	// Facebook video via <source> child
+	assert.True(t, isVideoEmbedVideo(etree.FromString(`<video><source src="https://video.xx.fbcdn.net/v/example.mp4"/></video>`)))
+	// Non-Facebook video must not be detected
+	assert.False(t, isVideoEmbedVideo(etree.FromString(`<video src="https://example.com/video.mp4"></video>`)))
+
+	// --- Sanitization ---
+
+	// YouTube iframe: expected attributes preserved
+	ytIframe := sanitizeIframeEmbed(etree.FromString(`<iframe src="https://www.youtube.com/embed/abc123" width="560" height="315" frameborder="0" allowfullscreen onload="evil()"></iframe>`))
+	assert.NotNil(t, ytIframe)
+	assert.Equal(t, "https://www.youtube.com/embed/abc123", dom.GetAttribute(ytIframe, "src"))
+	assert.Equal(t, "560", dom.GetAttribute(ytIframe, "width"))
+	assert.Equal(t, "315", dom.GetAttribute(ytIframe, "height"))
+	assert.Equal(t, "0", dom.GetAttribute(ytIframe, "frameborder"))
+	assert.True(t, dom.HasAttribute(ytIframe, "allowfullscreen"))
+	assert.False(t, dom.HasAttribute(ytIframe, "onload"))
+	assert.False(t, dom.HasAttribute(ytIframe, "srcdoc"))
+
+	// iframe with non-allowlisted src must be rejected
+	assert.Nil(t, sanitizeIframeEmbed(etree.FromString(`<iframe src="https://evil.com/malware"></iframe>`)))
+
+	// TikTok blockquote: expected attributes preserved, children stripped
+	tikTok := sanitizeBlockquoteEmbed(etree.FromString(`<blockquote class="tiktok-embed" cite="https://www.tiktok.com/@user/video/123" data-video-id="123"><script src="evil.js"></script></blockquote>`))
+	assert.NotNil(t, tikTok)
+	assert.Equal(t, "tiktok-embed", dom.GetAttribute(tikTok, "class"))
+	assert.Equal(t, "https://www.tiktok.com/@user/video/123", dom.GetAttribute(tikTok, "cite"))
+	assert.Equal(t, "123", dom.GetAttribute(tikTok, "data-video-id"))
+	assert.Equal(t, 0, len(dom.Children(tikTok)))
+
+	// Regular blockquote must not be returned as embed
+	assert.Nil(t, sanitizeBlockquoteEmbed(etree.FromString(`<blockquote>Some quote</blockquote>`)))
+
+	// Facebook video: src attribute preserved, event handlers stripped
+	fbVideo := sanitizeVideoEmbed(etree.FromString(`<video src="https://video.xx.fbcdn.net/v/example.mp4" width="640" height="360" controls autoplay onplay="evil()"></video>`))
+	assert.NotNil(t, fbVideo)
+	assert.Equal(t, "https://video.xx.fbcdn.net/v/example.mp4", dom.GetAttribute(fbVideo, "src"))
+	assert.Equal(t, "640", dom.GetAttribute(fbVideo, "width"))
+	assert.Equal(t, "360", dom.GetAttribute(fbVideo, "height"))
+	assert.True(t, dom.HasAttribute(fbVideo, "controls"))
+	assert.False(t, dom.HasAttribute(fbVideo, "autoplay"))
+	assert.False(t, dom.HasAttribute(fbVideo, "onplay"))
+
+	// Facebook video via <source> child
+	fbVideoSource := sanitizeVideoEmbed(etree.FromString(`<video><source src="https://video.xx.fbcdn.net/v/example.mp4"/></video>`))
+	assert.NotNil(t, fbVideoSource)
+	sourceChildren := dom.GetElementsByTagName(fbVideoSource, "source")
+	assert.Equal(t, 1, len(sourceChildren))
+	assert.Equal(t, "https://video.xx.fbcdn.net/v/example.mp4", dom.GetAttribute(sourceChildren[0], "src"))
+
+	// Non-Facebook video must be rejected
+	assert.Nil(t, sanitizeVideoEmbed(etree.FromString(`<video src="https://example.com/video.mp4"></video>`)))
+
+	// --- End-to-end extraction ---
+
+	// YouTube embed is present when IncludeVideoEmbeds is true
+	ytHtml := `<html><body><article><p>Watch this video:</p><iframe src="https://www.youtube.com/embed/abc123" width="560" height="315" frameborder="0" allowfullscreen></iframe></article></body></html>`
+	result, _ := Extract(strings.NewReader(ytHtml), videoOpts)
+	assert.NotNil(t, result)
+	contentHtml := dom.OuterHTML(result.ContentNode)
+	assert.Contains(t, contentHtml, `<iframe src="https://www.youtube.com/embed/abc123"`)
+
+	// YouTube embed is absent when IncludeVideoEmbeds is false
+	result, _ = Extract(strings.NewReader(ytHtml), zeroOpts)
+	assert.NotNil(t, result)
+	contentHtml = dom.OuterHTML(result.ContentNode)
+	assert.NotContains(t, contentHtml, `<iframe`)
+
+	// TikTok blockquote embed is present when IncludeVideoEmbeds is true
+	tikTokHtml := `<html><body><article><p>Check this out:</p><blockquote class="tiktok-embed" cite="https://www.tiktok.com/@user/video/123" data-video-id="123"><section><a href="#">@user</a></section><script async src="https://www.tiktok.com/embed.js"></script></blockquote></article></body></html>`
+	result, _ = Extract(strings.NewReader(tikTokHtml), videoOpts)
+	assert.NotNil(t, result)
+	contentHtml = dom.OuterHTML(result.ContentNode)
+	assert.Contains(t, contentHtml, `class="tiktok-embed"`)
+	assert.NotContains(t, contentHtml, `<script`)
+
+	// Facebook video embed is present when IncludeVideoEmbeds is true
+	fbHtml := `<html><body><article><p>Watch:</p><video src="https://video.xx.fbcdn.net/v/example.mp4" width="640" height="360" controls></video></article></body></html>`
+	result, _ = Extract(strings.NewReader(fbHtml), videoOpts)
+	assert.NotNil(t, result)
+	contentHtml = dom.OuterHTML(result.ContentNode)
+	assert.Contains(t, contentHtml, `<video src="https://video.xx.fbcdn.net/v/example.mp4"`)
+
+	// Non-Facebook video is excluded even when IncludeVideoEmbeds is true
+	nonFbHtml := `<html><body><article><p>Watch:</p><video src="https://example.com/video.mp4" controls></video></article></body></html>`
+	result, _ = Extract(strings.NewReader(nonFbHtml), videoOpts)
+	assert.NotNil(t, result)
+	contentHtml = dom.OuterHTML(result.ContentNode)
+	assert.NotContains(t, contentHtml, `<video`)
+}
+
 func Test_NonStdHtmlEntities(t *testing.T) {
 	htmlContent := `<html><body><p>Text &customentity; more text</p></body></html>`
 	result, _ := Extract(strings.NewReader(htmlContent), zeroOpts)

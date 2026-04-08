@@ -109,6 +109,10 @@ type Options struct {
 	// targets (experimental).
 	IncludeLinks bool
 
+	// IncludeVideoEmbeds specify whether the extraction result will include video embeds
+	// (YouTube and Vimeo via iframe; TikTok via blockquote; Facebook via video tag) (experimental).
+	IncludeVideoEmbeds bool
+
 	// BlacklistedAuthors is list of author names to be excluded from extraction result.
 	BlacklistedAuthors []string
 
